@@ -1,0 +1,24 @@
+PRNG psydo random number generator
+	Mac OS - True random
+	BSD
+		Just looking for non seq
+		ICMP, TCP mayber have do not fragment and then it sets to zero
+
+Global
+	Sequential
+	How to test. You have three, two talking using icmp, then spoof the third and check if its gone up by one. 
+
+Per-Destination
+	Sequential	
+	How to test. Test that you're not Global, but it will be similar. Except it wont itterate from the spoof. So do multiple spoof and count
+
+Per-Bucket
+	Sequential
+	How to test. Import time, time.sleep() wait for a bit then check. It should go up by a large amount. Only for ICMP/UDP stateless
+		Skipping values after sleep. it adds random noise
+
+Per-Connection
+	Sequential
+	How to test. If you have two computers you send from both and compare the results. If its per connection they should be different by a lot. These have to be TCP
+
+In the writeup include a full discription of why you know. Here is the test, here is the expected results.

@@ -89,7 +89,7 @@ def display_IPID_SYN(target_ip):
 def display_IPID_ICMP(target_ip):
     x: int = 3
     for i in range(x):
-        res = send_ICMP(target_it , testing = True)
+        res = send_ICMP(target_ip , testing = True)
 
 def guess_OS(ip_address: str) -> str:
     return "Windows"
@@ -102,7 +102,7 @@ def main() -> None:
         print(f"OS:\t{OS}")
 
     elif len(sys.argv) == 3:
-        if(sys.argv[2].tolower() == "syn"):
+        if(sys.argv[2].toLower() == "syn"):
             print("Testing IPID with SYN packets")
             display_IPID_SYN(sys.argv[1])
         else:

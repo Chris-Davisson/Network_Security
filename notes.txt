@@ -22,3 +22,8 @@ Per-Connection
 	How to test. If you have two computers you send from both and compare the results. If its per connection they should be different by a lot. These have to be TCP
 
 In the writeup include a full discription of why you know. Here is the test, here is the expected results.
+
+
+
+Send ICMP with do not frag DF=1 - if they come back random then its Linux system, ubuntu, OpenBSD or mac. if they are sequential it suggest FreeBSD, or NetBSD
+Send ICMP with frag flag DF=0 - Force fragmentation 

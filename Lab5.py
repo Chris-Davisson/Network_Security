@@ -69,15 +69,27 @@ def send_SYN(target_ip: str , spoof: int = None , target_port: int = 80 , testin
         return None
         
 
+def send_ICMP(target_ip, spoof: int = None, target_port: int = 80 , testing: bool = False):
+    try:
+        pkt = scapy.IP(dest=target_ip)/scapy.ICMP()
+        return scapy.sr1(pkt, timeout=2, verbose=0)
+    except Exception as e:
+        print(f"Error {e}")
+        return None
+
 
 def check_incremental():
     print()
 
 def display_IPID_SYN(target_ip):
     x: int = 3
-
     for i in range(x):
         res = send_SYN(target_ip , testing= True)
+
+def display_IPID_ICMP(target_ip):
+    x: int = 3
+    for i in range(x):
+        res = send_ICMP(target_it , testing = True)
 
 def guess_OS(ip_address: str) -> str:
     return "Windows"
@@ -90,8 +102,12 @@ def main() -> None:
         print(f"OS:\t{OS}")
 
     elif len(sys.argv) == 3:
-        print("Testing IPID with SYN packets")
-        display_IPID_SYN(sys.argv[1])
+        if(sys.argv[2].tolower() == "syn"):
+            print("Testing IPID with SYN packets")
+            display_IPID_SYN(sys.argv[1])
+        else:
+            print("Tesing IPID with ICMP packets")
+
     else:
         print("The program expects an IP address")
 

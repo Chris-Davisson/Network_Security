@@ -90,6 +90,7 @@ def display_IPID_ICMP(target_ip):
     x: int = 3
     for i in range(x):
         res = send_ICMP(target_ip , testing = True)
+        print(res)
 
 def guess_OS(ip_address: str) -> str:
     return "Windows"

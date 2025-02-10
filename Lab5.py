@@ -102,7 +102,7 @@ def main() -> None:
         print(f"OS:\t{OS}")
 
     elif len(sys.argv) == 3:
-        if(sys.argv[2].toLower() == "syn"):
+        if(sys.argv[2].lower() == "syn"):
             print("Testing IPID with SYN packets")
             display_IPID_SYN(sys.argv[1])
         else:

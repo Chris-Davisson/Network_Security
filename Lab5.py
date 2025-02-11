@@ -1,199 +1,171 @@
-#!/usr/bin/env python3
-import sys, random
-from time import sleep
-from scapy.all import sr1, IP, ICMP, TCP
+import sys
+from scapy.all import sr1 , ICMP, IP, TCP, send, sniff
+import random
+import numpy as np
+import time
+import threading
 
-# --------------------------
-# Helper: send a SYN packet
-# --------------------------
-def send_SYN(target_ip: str, spoof: str = None, target_port: int = 80) -> any:
-    try:
-        if spoof:
-            ip_layer = IP(src=spoof, dst=target_ip)
+def test_TTL(target_ip: str):
+    """Tests the TTL of the target IP and infers the OS."""
+    pkt = IP(dst=target_ip) / ICMP()
+    response = sr1(pkt, timeout=2, verbose=0)
+    if response is None:
+        print("No ICMP response received.")
+        return "No Response"
+    
+    # print("ICMP Response:")
+    # print(repr(response))
+    
+    if IP in response:
+        ttl = response[IP].ttl
+        print(f"TTL:\t{ttl}")
+        if ttl <= 64:
+            return "Linux/BSD/Mac/IOS"  # Common for Unix-like systems
+        elif ttl <= 128:
+            return "Windows"  # Common for Windows
+        elif ttl <= 255:
+            return "Possibly macOS (or other with high TTL)" # Some older Macs, and other devices
         else:
-            ip_layer = IP(dst=target_ip)
-        tcp_layer = TCP(
-            sport=random.randint(1024, 65535),
-            dport=target_port,
-            flags="S",
-            seq=random.randint(0, 2**32 - 1)
-        )
-        packet = ip_layer / tcp_layer
-        resp = sr1(packet, timeout=2, verbose=0)
-        return resp
-    except Exception as e:
-        print(f"Error sending SYN: {e}")
-        return None
-
-# --------------------------
-# Helper: send an ICMP packet
-# --------------------------
-def send_ICMP(target_ip: str, spoof: str = None) -> any:
-    try:
-        if spoof:
-            pkt = IP(src=spoof, dst=target_ip)/ICMP()
-        else:
-            pkt = IP(dst=target_ip)/ICMP()
-        resp = sr1(pkt, timeout=2, verbose=0)
-        return resp
-    except Exception as e:
-        print(f"Error sending ICMP: {e}")
-        return None
-
-# --------------------------
-# Helper: get a list of IP IDs using SYN (or ICMP)
-# --------------------------
-def get_ids(target_ip: str, count=5, delay=0.5, spoof: str = None, use_syn=True) -> list:
-    ids = []
-    for i in range(count):
-        if use_syn:
-            resp = send_SYN(target_ip, spoof=spoof)
-        else:
-            resp = send_ICMP(target_ip, spoof=spoof)
-        if resp and IP in resp:
-            ids.append(resp[IP].id)
-        else:
-            ids.append(None)
-        sleep(delay)
-    return ids
-
-# --------------------------
-# Test 1: Global Counter Test
-# (Expect a nearly sequential list for a global counter.)
-# --------------------------
-def test_global(target_ip: str):
-    ids = get_ids(target_ip, count=5, delay=0.2, use_syn=True)
-    print("Global Counter Test (no spoofing):")
-    print("IP IDs:", ids)
-    # Calculate differences modulo 2^16
-    diffs = []
-    for i in range(len(ids) - 1):
-        if ids[i] is not None and ids[i+1] is not None:
-            diffs.append((ids[i+1] - ids[i]) % 65536)
-    print("Differences:", diffs)
-    return ids, diffs
-
-# --------------------------
-# Test 2: Per-Destination / Per-Bucket Test
-# (Send normal packet vs. spoofed-source packet.)
-# --------------------------
-def test_per_destination(target_ip: str):
-    ids_normal = get_ids(target_ip, count=3, delay=0.2, spoof=None, use_syn=True)
-    # Use an arbitrary spoofed source IP (must be in dotted notation)
-    ids_spoof = get_ids(target_ip, count=3, delay=0.2, spoof="1.2.3.4", use_syn=True)
-    print("\nPer-Destination / Bucket Test:")
-    print("Normal (real source) IP IDs:", ids_normal)
-    print("Spoofed (src=1.2.3.4) IP IDs:", ids_spoof)
-    if ids_normal and ids_spoof and ids_normal[-1] is not None and ids_spoof[0] is not None:
-        diff = (ids_spoof[0] - ids_normal[-1]) % 65536
-        print("Difference between last normal and first spoofed:", diff)
-    return ids_normal, ids_spoof
-
-# --------------------------
-# Test 3: Per-Bucket Timing Test
-# (Send burst, sleep, then send another burst.)
-# --------------------------
-def test_per_bucket(target_ip: str):
-    burst1 = get_ids(target_ip, count=5, delay=0.1, use_syn=True)
-    sleep(5)  # long sleep to force bucket change
-    burst2 = get_ids(target_ip, count=5, delay=0.1, use_syn=True)
-    print("\nPer-Bucket Timing Test:")
-    print("Burst 1 IP IDs:", burst1)
-    print("Burst 2 IP IDs:", burst2)
-    if burst1 and burst2 and burst1[-1] is not None and burst2[0] is not None:
-        jump = (burst2[0] - burst1[-1]) % 65536
-        print("Jump between bursts:", jump)
-    return burst1, burst2
-
-# --------------------------
-# Test 4: Randomization Test
-# (Send many packets quickly to check variability.)
-# --------------------------
-def test_random(target_ip: str):
-    ids = get_ids(target_ip, count=20, delay=0.1, use_syn=True)
-    print("\nRandomization Test:")
-    print("IP IDs:", ids)
-    diffs = []
-    for i in range(len(ids) - 1):
-        if ids[i] is not None and ids[i+1] is not None:
-            diffs.append((ids[i+1] - ids[i]) % 65536)
-    print("Differences:", diffs)
-    return ids, diffs
-
-# --------------------------
-# OS Guessing Logic:
-#
-# - If Test 1 (global) shows nearly constant, small differences (e.g., 1 or 2),
-#   that indicates a single global counter. (BSD family, including macOS, FreeBSD, NetBSD.)
-#
-# - If Test 2 (per-destination) shows that spoofed packets’ IP IDs do not follow the
-#   same sequence as real ones (i.e. a large jump between the last real and first spoofed),
-#   that suggests a per-destination (or per-bucket) method (typical of Windows).
-#
-# - If Test 3 (timing test) shows a large jump after a sleep, that is also indicative
-#   of a bucketed (time-based) counter, as in Windows.
-#
-# - If Test 4 shows widely varying (random) values, that is characteristic of Linux
-#   randomizing the IP ID for nonfragmentable packets.
-#
-# For example, you might deduce:
-#
-#   - Windows: Test 2 and Test 3 reveal discontinuities (per-destination/bucket).
-#   - macOS/FreeBSD/NetBSD (BSD-based): Test 1 yields a strictly increasing (global) counter.
-#   - Ubuntu (Linux): Test 4 yields high variability (randomized IP IDs) when DF is set.
-# --------------------------
-def guess_os(target_ip: str):
-    print("\n--- Running OS Fingerprinting Tests ---")
-    ids_global, diffs_global = test_global(target_ip)
-    ids_norm, ids_spoof = test_per_destination(target_ip)
-    burst1, burst2 = test_per_bucket(target_ip)
-    ids_rand, diffs_rand = test_random(target_ip)
-
-    # Heuristic analysis: (Improved)
-    global_consistent = all(diff < 5 for diff in diffs_global) if diffs_global else False
-    spoof_jump = False
-    if ids_norm and ids_spoof and ids_norm[-1] is not None and ids_spoof[0] is not None:
-        spoof_jump = ((ids_spoof[0] - ids_norm[-1]) % 65536) > 100
-    bucket_jump = False
-    if burst1 and burst2 and burst1[-1] is not None and burst2[0] is not None:
-        bucket_jump = ((burst2[0] - burst1[-1]) % 65536) > 100
-
-    # Use standard deviation for randomness check, as in the improved example
-    valid_ids_rand = [id for id in ids_rand if id is not None]
-    diffs = []
-    for i in range(len(valid_ids_rand) - 1):
-        diffs.append((valid_ids_rand[i+1] - valid_ids_rand[i]) % 65536)
-    std_dev_rand = np.std(diffs) if diffs else 0
-
-
-    print("\n--- Heuristic Summary ---")
-    print("Global test shows sequential (global counter)?", global_consistent)
-    print("Spoofed test shows a jump (per-destination/bucket)?", spoof_jump)
-    print("Timing test shows a jump (per-bucket)?", bucket_jump)
-    print("Random test standard deviation:", std_dev_rand)  # Use std dev
-
-    # Make a guess: (Improved)
-    if not global_consistent and std_dev_rand > 5000:
-        guess = "Linux (randomized IP ID for nonfragmented packets)"
-    elif spoof_jump or bucket_jump or (not global_consistent and std_dev_rand < 1000):  # Key change here
-        guess = "Windows or macOS (per-destination / per-bucket method)" # Corrected guess
-    elif global_consistent:
-        guess = "BSD-based (FreeBSD, NetBSD, or OpenBSD) using a global counter"  # No longer includes macOS
+            return "Custom TTL"
     else:
-        guess = "Undetermined"
+        print("No IP layer found in the response.")
+        return "Invalid Response"
 
-    print(f"\n[Guess] The target appears to be: {guess}")
-    return guess
+def test_window_size(target_ip: str , target_port: int):
+    """Tests the TCP window size of the target IP and infers the OS."""
+    pkt = IP(dst=target_ip)/TCP(dport=target_port, flags='S')
+    reply = sr1(pkt,timeout=2,verbose=0)
+    if reply:
+        # reply[IP].show()
+        window = reply[TCP].window
+        print(f"TCP Window size: {window}")
+        #I got these values by testing and looking at the window sizes.
+        if window == 65535:
+            return "Windows/Mac"
+        elif window == 64240:
+            return "Linux"
+        else:
+            return "Unknown"
+    else:
+        print(f"[TCP] Packet: No reply received")
+        return None
+    
 
-# --------------------------
-# Main entry point
-# --------------------------
+def sniff_responses(target_ip, spoof_ip, timeout, batch2):
+    # print("Sniffing started...")
+    bpf_filter = f"src host {target_ip} and dst host {spoof_ip}"
+
+    def packet_callback(pkt):
+        if IP in pkt and pkt[IP].id != 0:  # Drop packets with ID = 0
+            batch2.append(pkt[IP].id)
+    sniff(filter=bpf_filter, timeout=timeout, prn=packet_callback)
+
+
+
+def test_IPID(target_ip: str, target_port: int, spoof: bool):
+    '''Tests IP ID behavior'''
+    spoof_ip = "8.8.8.8"
+    size = 10
+
+    batch1 = []
+    pkt = IP(dst=target_ip)/ICMP()
+
+    #Capture initial IP IDs via ICMP
+    for i in range(size):
+        response = sr1(pkt, timeout=2, verbose=0)
+        if response is not None:
+            batch1.append(response[IP].id)
+        time.sleep(0.1)
+  
+    
+    if not batch1:
+        print("No initial IP ID responses. Cannot continue IPID test.")
+        return
+    
+    print(f"Initial IP IDs: {batch1}")
+    batch2 = []
+    if spoof:
+        sniff_thread = threading.Thread(target=sniff_responses, args=(target_ip, spoof_ip,5 ,batch2 ))
+        sniff_thread.start()
+        # print("Sending spoofed packets...")
+        pkt = IP(src=spoof_ip, dst=target_ip) / ICMP()
+        for i in range(size):
+            send(pkt, verbose=0)
+            time.sleep(0.1)  # Small delay to prevent rapid-fire issues
+        sniff_thread.join()
+
+        print(f"Spoofed Packet ID IDs: {batch2}")
+
+    #Capture New IP IDs via ICMP
+    pkt = IP(dst=target_ip)/ICMP()
+    batch3 = []
+    for i in range(size):
+        response = sr1(pkt, timeout=2, verbose=0)
+        if response is not None:
+            batch3.append(response[IP].id)
+
+    print(f"Post-Spoofing IP IDs: {batch3}")
+
+    return (batch1, batch2, batch3)
+
+def doin_the_maths(batches):
+    print()
+
+def parse_arguments():
+    target_ip = "127.0.0.1"
+    target_port = 80
+
+    if len(sys.argv) > 1:
+        target_ip = sys.argv[1]
+    if len(sys.argv) > 2:
+        try:
+            target_port = int(sys.argv[2])
+        except ValueError:
+            print("Invalid port provided. Defaulting to port 80.")
+            target_port = 80
+
+    return target_ip, target_port
+
 def main():
-    if len(sys.argv) < 2:
-        print("Usage: python os_fingerprint.py <target_ip>")
-        sys.exit(1)
-    target_ip = sys.argv[1]
-    guess_os(target_ip)
+    print("\nStarting ICMP Ping Test for IP ID and TTL Analysis")
+    print("-" * 50 + "\n")
+
+    target_ip, target_port = parse_arguments()
+    print(f"Target IP:\t{target_ip}")
+    print(f"Target Port:\t{target_port}\n")
+
+    ttl = test_TTL(target_ip)
+    window_size = test_window_size(target_ip, target_port)
+    print(f"TTL: {ttl}")
+    print(f"Window Size: {window_size}")
+
+    batches = test_IPID(target_ip, target_port, True)
+    doin_the_maths(batches)
 
 if __name__ == "__main__":
     main()
+
+'''
++-------------------------+-----------+-------+--------+-------------+----------+-----------+
+|                         | Windows   | Mac   | Linux  | FreeBSD     | OpenBSD  | NetBSD    |
++-------------------------+-----------+-------+--------+-------------+----------+-----------+
+| IPID                    | Per-Bucket| Random| Global | Incremental | Random   | Incremental|
++-------------------------+-----------+-------+--------+-------------+----------+-----------+
+| TTL                     | 128       | 255?   | 64     | 64          | 64       | 64        |
++-------------------------+-----------+-------+--------+-------------+----------+-----------+
+| TCP window size         | 8192      | 4128  | 5840   | 65535       | 32768    | 32768     |
++-------------------------+-----------+-------+--------+-------------+----------+-----------+
+| Window Scaling Value    | 7         | 2     | 0      | 0           | 0        | 0         |
++-------------------------+-----------+-------+--------+-------------+----------+-----------+
+tcp window size windows: 65535 | WSL: 64240
+
+nc -l -p 5000 -v
+socat TCP-LISTEN:5000,fork,reuseaddr -
+
+what im thinking for windows is a two pointer and counting the distance between. 
+    Start at i, then check the difference abs(batch[i] - batch[i+1]) < 5
+        if yes then count++ go to the next one
+        if count is ~ 4 +- 3 then it is prob windows. 
+        if count is ~ 1 then it is random. check random with standard devation too
+        if count > 4 then it is global 
+'''

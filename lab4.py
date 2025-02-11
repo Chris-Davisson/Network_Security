@@ -7,7 +7,7 @@ def send_icmp(target, num):
         pkt = IP(dst=target)/ICMP()
         reply = sr1(pkt, timeout=2, verbose=0)
         if reply:
-            print(format_reply(reply , i))
+            print(f"[ICMP] Packet {i+1}: Received reply with IPID = {reply[IP].id}")
         else:
             print(f"[ICMP] Packet {i+1}: No reply received")
 
@@ -15,13 +15,11 @@ def send_tcp(target, num):
     for i in range(num):
         pkt = IP(dst=target)/TCP(dport=80, flags='S')
         reply = sr1(pkt, timeout=2, verbose=0)
+        
         if reply:
-            print(format_reply(reply , i))
+            print(f"[TCP] Packet {i+1}: Received reply with IPID = {reply[IP].id}")
         else:
             print(f"[TCP] Packet {i+1}: No reply received")
-
-def format_reply(reply , i) -> str:
-    return(f"[TCP] Packet {i+1}: Received reply with IPID = {reply[IP].id}")
 
 def main() -> None:
     if len(sys.argv) != 4:
